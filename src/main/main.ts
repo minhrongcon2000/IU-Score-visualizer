@@ -18,6 +18,123 @@ import fs from 'fs';
 import { PythonShell } from 'python-shell';
 import MenuBuilder from './menu';
 import { resolveHtmlPath } from './util';
+import puppeteer from 'puppeteer';
+import cheerio from 'cheerio';
+import { index } from 'cheerio/lib/api/traversing';
+
+const getHTML = async (username: string, password: string) => {
+  const browser = await puppeteer.launch();
+  const page = await browser.newPage();
+  await page.goto('http://edusoftweb.hcmiu.edu.vn/default.aspx?page=dangnhap', {
+    waitUntil: 'domcontentloaded',
+  });
+  await page.type(
+    "input[name='ctl00$ContentPlaceHolder1$ctl00$txtTaiKhoa']",
+    username
+  );
+  await page.type(
+    "input[name='ctl00$ContentPlaceHolder1$ctl00$txtMatKhau']",
+    password
+  );
+  await page.click("input[name='ctl00$ContentPlaceHolder1$ctl00$btnDangNhap']");
+  await page.waitForNavigation();
+  await page.click('#ctl00_menu_xemdiemthi > .center > a > span');
+  await page.waitForSelector('#ctl00_ContentPlaceHolder1_ctl00_div1');
+  const html = await page.evaluate(() => document.querySelector('*').outerHTML);
+  await browser.close();
+  return html;
+};
+
+const processRawHTML = (html: string) => {
+  const $ = cheerio.load(html);
+  // eslint-disable-next-line prefer-const
+  let rawData = [];
+  $('tr').each((_index, element) => {
+    if (element.attribs.class && element.attribs.class.endsWith('diem')) {
+      // eslint-disable-next-line prefer-const
+      let rawDataItem: string[] = [];
+      $(element)
+        .find('.Label')
+        .each((_childIndex, childElement) => {
+          rawDataItem.push($(childElement).text());
+        });
+      rawData.push(rawDataItem);
+    }
+  });
+
+  rawData[0] = [
+    'subject_index',
+    'subject_id',
+    'subject_name',
+    'credit',
+    'inclass_percent',
+    'midterm_percent',
+    'final_percent',
+    'inclass_score',
+    'midterm_exam',
+    'final_exam',
+    'numeric_final_score_1',
+    'numeric_final_score',
+    'written_final_score_1',
+    'written_final_score',
+  ];
+
+  // eslint-disable-next-line prefer-const
+  let processedData = [];
+  const columnName = rawData[0];
+  let semCounter = 1;
+  let trueSemCounter = 1;
+  let semName = '';
+
+  function isBlank(str: string) {
+    return !str || /^\s*$/.test(str);
+  }
+
+  // eslint-disable-next-line no-restricted-syntax
+  for (const item of rawData.slice(1)) {
+    if (item.length === 1) {
+      semName = `Semester ${trueSemCounter}`;
+      semCounter += 1;
+      if (semCounter % 3 !== 0) trueSemCounter += 1;
+    } else {
+      // eslint-disable-next-line prefer-const
+      let itemInfo = {};
+      // eslint-disable-next-line no-plusplus
+      for (let i = 0; i < item.length; i++) {
+        let itemValue = isBlank(item[i]) || item[i] === 'NA' ? '' : item[i];
+        if (itemValue.length > 0) {
+          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+          // @ts-ignore: Unreachable code error
+          if (columnName[i] === 'credit') itemValue = parseInt(itemValue, 10);
+          else if (
+            [
+              'inclass_percent',
+              'midterm_percent',
+              'final_percent',
+              'inclass_score',
+              'midterm_exam',
+              'final_exam',
+              'numeric_final_score_1',
+              'numeric_final_score',
+            ].includes(columnName[i])
+          )
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+            // @ts-ignore: Unreachable code error
+            itemValue = parseFloat(itemValue);
+        }
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+        // @ts-ignore: Unreachable code error
+        itemInfo[columnName[i]] = itemValue;
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+        // @ts-ignore: Unreachable code error
+        itemInfo.semester = semName;
+      }
+      processedData.push(itemInfo);
+    }
+  }
+
+  return processedData;
+};
 
 export default class AppUpdater {
   constructor() {
@@ -29,8 +146,13 @@ export default class AppUpdater {
 
 let mainWindow: BrowserWindow | null = null;
 
-ipcMain.on('login', (event, arg) => {
+ipcMain.on('login', async (event, arg) => {
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+  // @ts-ignore: Unreachable code error
+  // eslint-disable-next-line prefer-const
   let config = JSON.parse(
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-ignore: Unreachable code error
     fs.readFileSync(
       app.isPackaged
         ? path.join(process.resourcesPath, 'assets/config.json')
@@ -41,43 +163,32 @@ ipcMain.on('login', (event, arg) => {
   const dataDir = app.isPackaged
     ? path.join(process.resourcesPath, 'assets/student_data.json')
     : path.join(__dirname, '../../assets/student_data.json');
-  PythonShell.run(
-    app.isPackaged
-      ? path.join(process.resourcesPath, 'assets/data_crawler.py')
-      : path.join(__dirname, '../../assets/data_crawler.py'),
-    {
-      args: [
-        '--username',
-        username,
-        '--password',
-        password,
-        '--data_dir',
-        dataDir,
-      ],
-    },
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    (err: unknown, _results: unknown) => {
-      event.returnValue = !err;
-      if (!err) {
-        config = {
-          ...config,
-          username,
-          dataDir,
-        };
-        const data = JSON.stringify(config, null, 2);
-        fs.writeFileSync(
-          app.isPackaged
-            ? path.join(process.resourcesPath, 'assets/config.json')
-            : path.join(__dirname, '../../assets/config.json'),
-          data
-        );
-      }
-    }
-  );
+  try {
+    const html = await getHTML(username, password);
+    const processedData = processRawHTML(html);
+    config = {
+      ...config,
+      username,
+      dataDir,
+    };
+    fs.writeFileSync(
+      app.isPackaged
+        ? path.join(process.resourcesPath, 'assets/config.json')
+        : path.join(__dirname, '../../assets/config.json'),
+      JSON.stringify(config, null, 2)
+    );
+    fs.writeFileSync(dataDir, JSON.stringify(processedData, null, 2));
+    event.returnValue = true;
+  } catch (err) {
+    event.returnValue = false;
+  }
 });
 
-ipcMain.on('overview', (event, arg) => {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+ipcMain.on('overview', (event, _arg) => {
   const config = JSON.parse(
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-ignore: Unreachable code error
     fs.readFileSync(
       app.isPackaged
         ? path.join(process.resourcesPath, 'assets/config.json')
@@ -85,7 +196,9 @@ ipcMain.on('overview', (event, arg) => {
     )
   );
   const data = fs.existsSync(config.dataDir)
-    ? JSON.parse(fs.readFileSync(config.dataDir))
+    ? // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-ignore: Unreachable code error
+      JSON.parse(fs.readFileSync(config.dataDir))
     : [];
   event.returnValue = { username: config.username, data };
 });
