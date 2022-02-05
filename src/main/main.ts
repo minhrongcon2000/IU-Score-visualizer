@@ -16,31 +16,71 @@ import { autoUpdater } from 'electron-updater';
 import log from 'electron-log';
 import fs from 'fs';
 import cheerio from 'cheerio';
-import puppeteer from 'puppeteer';
+import fetch from 'cross-fetch';
 import MenuBuilder from './menu';
 import { resolveHtmlPath } from './util';
 
 const getHTML = async (username: string, password: string) => {
-  const browser = await puppeteer.launch();
-  const page = await browser.newPage();
-  await page.goto('http://edusoftweb.hcmiu.edu.vn/default.aspx?page=dangnhap', {
-    waitUntil: 'domcontentloaded',
+  const res = await fetch('http://edusoftweb.hcmiu.edu.vn/default.aspx', {
+    headers: {
+      accept:
+        'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
+      'accept-language': 'en-US,en;q=0.9',
+      'cache-control': 'max-age=0',
+      'upgrade-insecure-requests': '1',
+    },
+    referrerPolicy: 'strict-origin-when-cross-origin',
+    body: null,
+    method: 'GET',
   });
-  await page.type(
-    "input[name='ctl00$ContentPlaceHolder1$ctl00$txtTaiKhoa']",
-    username
+  const cookie = res.headers.get('set-cookie');
+  const html = await res.text();
+  const $ = cheerio.load(html);
+
+  const viewstate = $("input[name='__VIEWSTATE']").val();
+  const viewgenerator = $("input[name='__VIEWSTATEGENERATOR']").val();
+
+  await fetch('http://edusoftweb.hcmiu.edu.vn/default.aspx', {
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-ignore: Unreachable code error
+    headers: {
+      accept:
+        'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
+      'accept-language': 'en-US,en;q=0.9',
+      'cache-control': 'max-age=0',
+      'content-type':
+        'multipart/form-data; boundary=----WebKitFormBoundaryBkXRbQQD9TLvBsQC',
+      'upgrade-insecure-requests': '1',
+      cookie,
+      Referer: 'http://edusoftweb.hcmiu.edu.vn/default.aspx',
+      'Referrer-Policy': 'strict-origin-when-cross-origin',
+    },
+    body: `------WebKitFormBoundaryBkXRbQQD9TLvBsQC\r\nContent-Disposition: form-data; name=\"__EVENTTARGET\"\r\n\r\n\r\n------WebKitFormBoundaryBkXRbQQD9TLvBsQC\r\nContent-Disposition: form-data; name=\"__EVENTARGUMENT\"\r\n\r\n\r\n------WebKitFormBoundaryBkXRbQQD9TLvBsQC\r\nContent-Disposition: form-data; name=\"__VIEWSTATE\"\r\n\r\n${viewstate}\r\n------WebKitFormBoundaryBkXRbQQD9TLvBsQC\r\nContent-Disposition: form-data; name=\"__VIEWSTATEGENERATOR\"\r\n\r\n${viewgenerator}\r\n------WebKitFormBoundaryBkXRbQQD9TLvBsQC\r\nContent-Disposition: form-data; name=\"ctl00$ContentPlaceHolder1$ctl00$ucDangNhap$txtTaiKhoa\"\r\n\r\n${username}\r\n------WebKitFormBoundaryBkXRbQQD9TLvBsQC\r\nContent-Disposition: form-data; name=\"ctl00$ContentPlaceHolder1$ctl00$ucDangNhap$txtMatKhau\"\r\n\r\n${password}\r\n------WebKitFormBoundaryBkXRbQQD9TLvBsQC\r\nContent-Disposition: form-data; name=\"ctl00$ContentPlaceHolder1$ctl00$ucDangNhap$btnDangNhap\"\r\n\r\nĐăng Nhập\r\n------WebKitFormBoundaryBkXRbQQD9TLvBsQC--\r\n`,
+    method: 'POST',
+  });
+
+  const result = await fetch(
+    'http://edusoftweb.hcmiu.edu.vn/Default.aspx?page=xemdiemthi',
+    {
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-ignore: Unreachable code error
+      headers: {
+        accept:
+          'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
+        'accept-language': 'en-US,en;q=0.9',
+        'upgrade-insecure-requests': '1',
+        cookie,
+        Referer: 'http://edusoftweb.hcmiu.edu.vn/default.aspx',
+        'Referrer-Policy': 'strict-origin-when-cross-origin',
+      },
+      body: null,
+      method: 'GET',
+    }
   );
-  await page.type(
-    "input[name='ctl00$ContentPlaceHolder1$ctl00$txtMatKhau']",
-    password
-  );
-  await page.click("input[name='ctl00$ContentPlaceHolder1$ctl00$btnDangNhap']");
-  await page.waitForNavigation();
-  await page.click('#ctl00_menu_xemdiemthi > .center > a > span');
-  await page.waitForSelector('#ctl00_ContentPlaceHolder1_ctl00_div1');
-  const html = await page.evaluate(() => document.querySelector('*').outerHTML);
-  await browser.close();
-  return html;
+
+  // eslint-disable-next-line @typescript-eslint/naming-convention
+  const result_html = await result.text();
+  return result_html;
 };
 
 const processRawHTML = (html: string) => {
@@ -161,14 +201,14 @@ ipcMain.on('login', async (event, arg) => {
   const dataDir = app.isPackaged
     ? path.join(process.resourcesPath, 'assets/student_data.json')
     : path.join(__dirname, '../../assets/student_data.json');
-  try {
-    const html = await getHTML(username, password);
-    const processedData = processRawHTML(html);
-    config = {
-      ...config,
-      username,
-      dataDir,
-    };
+  const html = await getHTML(username, password);
+  const processedData = processRawHTML(html);
+  config = {
+    ...config,
+    username,
+    dataDir,
+  };
+  if (processedData.length > 0) {
     fs.writeFileSync(
       app.isPackaged
         ? path.join(process.resourcesPath, 'assets/config.json')
@@ -177,9 +217,7 @@ ipcMain.on('login', async (event, arg) => {
     );
     fs.writeFileSync(dataDir, JSON.stringify(processedData, null, 2));
     event.returnValue = true;
-  } catch (err) {
-    event.returnValue = false;
-  }
+  } else event.returnValue = false;
 });
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
