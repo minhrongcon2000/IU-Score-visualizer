@@ -15,12 +15,10 @@ import { app, BrowserWindow, shell, ipcMain } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import log from 'electron-log';
 import fs from 'fs';
-import { PythonShell } from 'python-shell';
+import cheerio from 'cheerio';
+import puppeteer from 'puppeteer';
 import MenuBuilder from './menu';
 import { resolveHtmlPath } from './util';
-import puppeteer from 'puppeteer';
-import cheerio from 'cheerio';
-import { index } from 'cheerio/lib/api/traversing';
 
 const getHTML = async (username: string, password: string) => {
   const browser = await puppeteer.launch();
