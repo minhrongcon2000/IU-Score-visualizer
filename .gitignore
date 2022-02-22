@@ -129,3 +129,5 @@ dmypy.json
 .pyre/
 node_modules
 .DS_Store
+android/key.properties
+build
